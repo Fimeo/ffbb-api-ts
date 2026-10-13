@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { FFBBClient } from '../src/client.js';
-import { FFBBAuthError } from '../src/errors.js';
+import { FFBBAuthError, FFBBNetworkError, FFBBRequestError } from '../src/errors.js';
 import {
   createMockFetch,
+  createNetworkErrorFetch,
   MOCK_CONFIGURATION,
   MOCK_ORGANISME,
   MOCK_POULE,
@@ -101,7 +102,7 @@ describe('FFBBClient', () => {
     it('builds asset URL without transforms', () => {
       const client = new FFBBClient({ token: 'test-token' });
       const url = client.assetUrl('abc-123');
-      expect(url).toBe('https://api.ffbb.com/assets/abc-123');
+      expect(url).toBe('https://bo.ffbb.com/assets/abc-123');
     });
 
     it('builds asset URL with transforms', () => {
@@ -183,13 +184,71 @@ describe('FFBBClient', () => {
     it('uses default URLs when not specified', () => {
       const client = new FFBBClient({ token: 'test' });
       const url = client.assetUrl('id');
-      expect(url).toContain('api.ffbb.com');
+      expect(url).toContain('bo.ffbb.com');
     });
 
     it('accepts custom baseUrl', () => {
       const client = new FFBBClient({ baseUrl: 'https://custom.example.com', token: 'test' });
       const url = client.assetUrl('id');
       expect(url).toContain('custom.example.com');
+    });
+  });
+
+  describe('base URL fallback', () => {
+    it('falls back to bo.ffbb.app then api.ffbb.com when hosts are unreachable', async () => {
+      const mockFetch = vi.fn(((input: string) => {
+        if (input.startsWith('https://api.ffbb.com/')) {
+          return Promise.resolve(new Response(JSON.stringify(MOCK_CONFIGURATION), { status: 200 }));
+        }
+        return Promise.reject(new TypeError('fetch failed'));
+      }) as typeof fetch);
+
+      const client = new FFBBClient({ fetch: mockFetch });
+      await client.authenticate();
+
+      const calls = mockFetch.mock.calls.map((c) => c[0]);
+      expect(calls).toEqual([
+        'https://bo.ffbb.com/items/configuration',
+        'https://bo.ffbb.app/items/configuration',
+        'https://api.ffbb.com/items/configuration',
+      ]);
+    });
+
+    it('keeps using the host that answered for subsequent requests', async () => {
+      const mockFetch = vi.fn(((input: string) => {
+        if (input.startsWith('https://bo.ffbb.com/')) {
+          return Promise.resolve(new Response('Bad Gateway', { status: 502, statusText: 'Bad Gateway' }));
+        }
+        return Promise.resolve(new Response(JSON.stringify(MOCK_POULE), { status: 200 }));
+      }) as typeof fetch);
+
+      const client = new FFBBClient({ fetch: mockFetch, token: 'test-token' });
+      await client.getPoule('poule-1');
+      await client.getPoule('poule-1');
+
+      const calls = mockFetch.mock.calls.map((c) => c[0]);
+      expect(calls).toEqual([
+        'https://bo.ffbb.com/items/ffbbserver_poules/poule-1',
+        'https://bo.ffbb.app/items/ffbbserver_poules/poule-1',
+        'https://bo.ffbb.app/items/ffbbserver_poules/poule-1',
+      ]);
+      expect(client.assetUrl('id')).toBe('https://bo.ffbb.app/assets/id');
+    });
+
+    it('does not fall back on 4xx errors', async () => {
+      const mockFetch = createMockFetch({});
+
+      const client = new FFBBClient({ fetch: mockFetch, token: 'test-token' });
+      await expect(client.getPoule('missing')).rejects.toThrow(FFBBRequestError);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws the last error when every host fails', async () => {
+      const mockFetch = createNetworkErrorFetch();
+
+      const client = new FFBBClient({ fetch: mockFetch, token: 'test-token' });
+      await expect(client.getPoule('poule-1')).rejects.toThrow(FFBBNetworkError);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
     });
   });
 });

@@ -41,6 +41,19 @@ export class FFBBRequestError extends FFBBError {
 }
 
 /**
+ * Thrown when a request fails at the network level (DNS, connection refused, TLS...).
+ */
+export class FFBBNetworkError extends FFBBError {
+  readonly url: string;
+
+  constructor(url: string, options?: ErrorOptions) {
+    super(`Network error requesting ${url}`, options);
+    this.name = 'FFBBNetworkError';
+    this.url = url;
+  }
+}
+
+/**
  * Thrown when a request exceeds the configured timeout.
  */
 export class FFBBTimeoutError extends FFBBError {

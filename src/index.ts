@@ -1,10 +1,13 @@
 // ─── Main client ─────────────────────────────────────────────────────────────
-export { FFBBClient } from './client.js';
+export { FFBBClient, DEFAULT_BASE_URLS } from './client.js';
 export type { FFBBClientOptions } from './client.js';
 
 // ─── Sub-clients ─────────────────────────────────────────────────────────────
 export { DirectusClient } from './directus/index.js';
 export { MeilisearchClient } from './meilisearch/index.js';
+
+// ─── Endpoints ───────────────────────────────────────────────────────────────
+export { EndpointPool, isRecoverableError } from './endpoints.js';
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 export { TokenManager } from './auth.js';
@@ -22,7 +25,13 @@ export { COLLECTIONS } from './directus/collections.js';
 export type { CollectionName } from './directus/collections.js';
 
 // ─── Errors ──────────────────────────────────────────────────────────────────
-export { FFBBError, FFBBAuthError, FFBBRequestError, FFBBTimeoutError } from './errors.js';
+export {
+  FFBBError,
+  FFBBAuthError,
+  FFBBRequestError,
+  FFBBNetworkError,
+  FFBBTimeoutError,
+} from './errors.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export type {

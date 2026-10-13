@@ -1,3 +1,6 @@
+import { EndpointPool } from './endpoints.js';
+import { FFBBNetworkError, FFBBRequestError } from './errors.js';
+
 /**
  * Transform options for FFBB image assets.
  */
@@ -19,7 +22,7 @@ export interface AssetTransforms {
  *
  * @example
  * ```ts
- * const assets = new AssetHelper('https://api.ffbb.com', fetch);
+ * const assets = new AssetHelper('https://bo.ffbb.com', fetch);
  *
  * // Get a URL for a logo
  * const logoUrl = assets.url('uuid-here', { width: 300, format: 'webp' });
@@ -29,19 +32,33 @@ export interface AssetTransforms {
  * ```
  */
 export class AssetHelper {
+  private readonly endpoints: EndpointPool;
+
+  /**
+   * @param baseUrl - A base URL, an ordered list of fallback base URLs, or a shared {@link EndpointPool}
+   * @param fetchFn - The fetch implementation to use
+   */
   constructor(
-    private readonly baseUrl: string,
+    baseUrl: string | readonly string[] | EndpointPool,
     private readonly fetchFn: typeof fetch,
-  ) {}
+  ) {
+    this.endpoints = baseUrl instanceof EndpointPool ? baseUrl : new EndpointPool(baseUrl);
+  }
 
   /**
    * Build a full URL for an asset with optional image transforms.
+   *
+   * The URL uses the currently active base URL.
    *
    * @param uuid - The asset UUID
    * @param transforms - Optional image transformation parameters
    * @returns The full asset URL
    */
   url(uuid: string, transforms?: AssetTransforms): string {
+    return this.buildUrl(this.endpoints.current, uuid, transforms);
+  }
+
+  private buildUrl(baseUrl: string, uuid: string, transforms?: AssetTransforms): string {
     const params = new URLSearchParams();
 
     if (transforms) {
@@ -53,7 +70,7 @@ export class AssetHelper {
     }
 
     const qs = params.toString();
-    return `${this.baseUrl}/assets/${uuid}${qs ? `?${qs}` : ''}`;
+    return `${baseUrl}/assets/${uuid}${qs ? `?${qs}` : ''}`;
   }
 
   /**
@@ -64,13 +81,24 @@ export class AssetHelper {
    * @returns The raw file data as an ArrayBuffer
    */
   async download(uuid: string, transforms?: AssetTransforms): Promise<ArrayBuffer> {
-    const assetUrl = this.url(uuid, transforms);
-    const response = await this.fetchFn(assetUrl);
+    return this.endpoints.run(async (baseUrl) => {
+      const assetUrl = this.buildUrl(baseUrl, uuid, transforms);
+      let response: Response;
+      try {
+        response = await this.fetchFn(assetUrl);
+      } catch (error) {
+        throw new FFBBNetworkError(assetUrl, { cause: error });
+      }
 
-    if (!response.ok) {
-      throw new Error(`Failed to download asset ${uuid}: HTTP ${response.status}`);
-    }
+      if (!response.ok) {
+        throw new FFBBRequestError(`Failed to download asset ${uuid}: HTTP ${response.status}`, {
+          status: response.status,
+          statusText: response.statusText,
+          url: assetUrl,
+        });
+      }
 
-    return response.arrayBuffer();
+      return response.arrayBuffer();
+    });
   }
 }

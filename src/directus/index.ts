@@ -1,6 +1,13 @@
 import type { DirectusQuery, DirectusResponse } from '../types/query.js';
 import type { TokenManager } from '../auth.js';
-import { FFBBRequestError, FFBBAuthError, FFBBTimeoutError, FFBBError } from '../errors.js';
+import {
+  FFBBRequestError,
+  FFBBAuthError,
+  FFBBTimeoutError,
+  FFBBError,
+  FFBBNetworkError,
+} from '../errors.js';
+import { EndpointPool } from '../endpoints.js';
 import { buildQueryString } from './query-builder.js';
 
 const DEFAULT_PAGE_SIZE = 100;
@@ -9,23 +16,30 @@ const DEFAULT_PAGE_SIZE = 100;
  * Low-level client for the FFBB Directus REST API.
  *
  * Handles request construction, authentication headers, error mapping,
- * and pagination.
+ * pagination and fallback between several base URLs.
  *
  * @example
  * ```ts
- * const directus = new DirectusClient('https://api.ffbb.com', tokenManager, fetch);
+ * const directus = new DirectusClient('https://bo.ffbb.com', tokenManager, fetch);
  * const poule = await directus.get<Poule>('ffbbserver_poules', '123', {
  *   fields: ['id', 'nom', 'rencontres.*'],
  * });
  * ```
  */
 export class DirectusClient {
+  private readonly endpoints: EndpointPool;
+
+  /**
+   * @param baseUrl - A base URL, an ordered list of fallback base URLs, or a shared {@link EndpointPool}
+   */
   constructor(
-    private readonly baseUrl: string,
+    baseUrl: string | readonly string[] | EndpointPool,
     private readonly tokenManager: TokenManager,
     private readonly fetchFn: typeof fetch,
     private readonly timeout: number = 30_000,
-  ) {}
+  ) {
+    this.endpoints = baseUrl instanceof EndpointPool ? baseUrl : new EndpointPool(baseUrl);
+  }
 
   /**
    * Fetch a single item from a collection by ID.
@@ -106,11 +120,16 @@ export class DirectusClient {
   /**
    * Execute a raw GET request against the Directus API.
    *
+   * On network error, timeout or HTTP 5xx, the request is retried on the next base URL.
+   *
    * @param path - The request path (e.g. `/items/ffbbserver_poules/123?fields[]=id`)
    * @returns Parsed JSON response
    */
   async request<T>(path: string): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
+    return this.endpoints.run((baseUrl) => this.requestOnce<T>(`${baseUrl}${path}`));
+  }
+
+  private async requestOnce<T>(url: string): Promise<T> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
 
@@ -128,7 +147,7 @@ export class DirectusClient {
         if (error instanceof DOMException && error.name === 'AbortError') {
           throw new FFBBTimeoutError(url, this.timeout);
         }
-        throw new FFBBError(`Network error requesting ${url}`, { cause: error });
+        throw new FFBBNetworkError(url, { cause: error });
       }
 
       if (response.status === 401 || response.status === 403) {

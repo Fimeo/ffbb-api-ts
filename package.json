@@ -1,6 +1,6 @@
 {
   "name": "ffbb-api-client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript client for the FFBB (French Basketball Federation) API - Directus REST & Meilisearch",
   "type": "module",
   "main": "./dist/index.cjs",

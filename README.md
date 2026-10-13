@@ -429,12 +429,25 @@ import type {
 
 | Option             | Défaut                              | Description                                       |
 |--------------------|-------------------------------------|---------------------------------------------------|
-| `baseUrl`          | `https://api.ffbb.com`              | URL de base de l'API Directus                     |
+| `baseUrl`          | `DEFAULT_BASE_URLS`                 | URL de base de l'API Directus, ou liste d'URLs de fallback |
 | `token`            | —                                   | Token Directus (sinon, utiliser `authenticate()`) |
 | `meilisearchUrl`   | `https://meilisearch-prod.ffbb.app` | URL Meilisearch                                   |
 | `meilisearchToken` | —                                   | Token Meilisearch                                 |
 | `fetch`            | `globalThis.fetch`                  | Implémentation fetch personnalisée                |
 | `timeout`          | `30000`                             | Timeout des requêtes en ms                        |
+
+### Fallback entre URLs
+
+Par défaut, le client interroge `https://bo.ffbb.com`, puis `https://bo.ffbb.app`, puis `https://api.ffbb.com` (`DEFAULT_BASE_URLS`).
+En cas d'erreur réseau, de timeout ou de réponse HTTP 5xx, la requête est rejouée sur l'URL suivante. L'URL qui a répondu devient l'URL utilisée en priorité pour les requêtes suivantes (y compris pour `assetUrl()`). Les erreurs 4xx ne déclenchent pas de fallback.
+
+```ts
+// Liste personnalisée
+const client = new FFBBClient({ baseUrl: ['https://bo.ffbb.app', 'https://api.ffbb.com'] });
+
+// Une seule URL, sans fallback
+const client = new FFBBClient({ baseUrl: 'https://api.ffbb.com' });
+```
 
 ## Licence
 

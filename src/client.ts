@@ -23,8 +23,14 @@ import type {
 } from './types/meilisearch.js';
 import type { CollectionName } from './directus/collections.js';
 import { FFBBError } from './errors.js';
+import { EndpointPool } from './endpoints.js';
 
-const DEFAULT_BASE_URL = 'https://api.ffbb.com';
+/** Directus API base URLs, tried in order. */
+export const DEFAULT_BASE_URLS: readonly string[] = [
+  'https://bo.ffbb.com',
+  'https://bo.ffbb.app',
+  'https://api.ffbb.com',
+];
 const DEFAULT_MEILISEARCH_URL = 'https://meilisearch-prod.ffbb.app';
 const DEFAULT_TIMEOUT = 30_000;
 
@@ -32,8 +38,11 @@ const DEFAULT_TIMEOUT = 30_000;
  * Options for creating an {@link FFBBClient}.
  */
 export interface FFBBClientOptions {
-  /** Override the Directus API base URL. Default: `https://api.ffbb.com` */
-  baseUrl?: string;
+  /**
+   * Override the Directus API base URL, or give an ordered list of fallback base URLs.
+   * Default: `https://bo.ffbb.com`, then `https://bo.ffbb.app`, then `https://api.ffbb.com`.
+   */
+  baseUrl?: string | readonly string[];
   /** Provide a Directus API token directly instead of auto-fetching. */
   token?: string;
   /** Override the Meilisearch base URL. Default: `https://meilisearch-prod.ffbb.app` */
@@ -85,11 +94,11 @@ export class FFBBClient {
   readonly assets: AssetHelper;
 
   private readonly tokenManager: TokenManager;
-  private readonly baseUrl: string;
+  private readonly endpoints: EndpointPool;
   private readonly fetchFn: typeof fetch;
 
   constructor(options?: FFBBClientOptions) {
-    this.baseUrl = options?.baseUrl ?? DEFAULT_BASE_URL;
+    this.endpoints = new EndpointPool(options?.baseUrl ?? DEFAULT_BASE_URLS);
     this.fetchFn = options?.fetch ?? globalThis.fetch.bind(globalThis);
 
     const meilisearchUrl = options?.meilisearchUrl ?? DEFAULT_MEILISEARCH_URL;
@@ -100,9 +109,9 @@ export class FFBBClient {
       meilisearchToken: options?.meilisearchToken,
     });
 
-    this.directus = new DirectusClient(this.baseUrl, this.tokenManager, this.fetchFn, timeout);
+    this.directus = new DirectusClient(this.endpoints, this.tokenManager, this.fetchFn, timeout);
     this.search = new MeilisearchClient(meilisearchUrl, this.tokenManager, this.fetchFn);
-    this.assets = new AssetHelper(this.baseUrl, this.fetchFn);
+    this.assets = new AssetHelper(this.endpoints, this.fetchFn);
   }
 
   /**
@@ -114,7 +123,7 @@ export class FFBBClient {
    * @throws {FFBBAuthError} If token fetch fails
    */
   async authenticate(): Promise<void> {
-    await this.tokenManager.fetchTokens(this.baseUrl, this.fetchFn);
+    await this.tokenManager.fetchTokens(this.endpoints, this.fetchFn);
   }
 
   // ─── Convenience getters for common collections ────────────────────────────
@@ -240,14 +249,9 @@ export class FFBBClient {
    */
   async getApiVersion(): Promise<ApiVersion | null> {
     try {
-      const url = `${this.baseUrl}/json/app_versions.json`;
-      const response = await this.fetchFn(url, {
-        headers: { Authorization: this.tokenManager.getDirectusAuthHeader() },
-      });
-
-      if (!response.ok) return null;
-
-      const versions = (await response.json()) as Array<{ version: string; title: string }>;
+      const versions = await this.directus.request<Array<{ version: string; title: string }>>(
+        '/json/app_versions.json',
+      );
       if (Array.isArray(versions) && versions.length > 0) {
         const latest = versions[versions.length - 1];
         return { version: latest.version, title: latest.title };
@@ -265,14 +269,7 @@ export class FFBBClient {
    */
   async getLives(): Promise<LiveMatch[]> {
     try {
-      const url = `${this.baseUrl}/json/lives.json`;
-      const response = await this.fetchFn(url, {
-        headers: { Authorization: this.tokenManager.getDirectusAuthHeader() },
-      });
-
-      if (!response.ok) return [];
-
-      const data = await response.json();
+      const data = await this.directus.request<unknown>('/json/lives.json');
       return Array.isArray(data) ? data : [];
     } catch {
       return [];

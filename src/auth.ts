@@ -1,6 +1,7 @@
 import type { Configuration } from './types/collections.js';
 import type { DirectusResponse } from './types/query.js';
-import { FFBBAuthError } from './errors.js';
+import { FFBBAuthError, FFBBNetworkError, FFBBRequestError } from './errors.js';
+import { EndpointPool } from './endpoints.js';
 
 /**
  * Manages API tokens for the FFBB Directus and Meilisearch APIs.
@@ -12,7 +13,7 @@ import { FFBBAuthError } from './errors.js';
  * ```ts
  * // Auto-fetch tokens
  * const manager = new TokenManager();
- * await manager.fetchTokens('https://api.ffbb.com', fetch);
+ * await manager.fetchTokens(['https://bo.ffbb.com', 'https://bo.ffbb.app'], fetch);
  *
  * // Manual tokens
  * const manager = new TokenManager({
@@ -33,26 +34,48 @@ export class TokenManager {
   /**
    * Fetch both API tokens from the FFBB configuration endpoint.
    *
-   * @param baseUrl - The API base URL (e.g. `https://api.ffbb.com`)
+   * When several base URLs are given, the next one is tried on network error or HTTP 5xx.
+   *
+   * @param baseUrl - The API base URL (e.g. `https://bo.ffbb.com`), an ordered list of
+   *   fallback base URLs, or a shared {@link EndpointPool}
    * @param fetchFn - The fetch implementation to use
    * @throws {FFBBAuthError} If the token fetch fails or tokens are missing from the response
    */
-  async fetchTokens(baseUrl: string, fetchFn: typeof fetch): Promise<void> {
-    const url = `${baseUrl}/items/configuration`;
+  async fetchTokens(
+    baseUrl: string | readonly string[] | EndpointPool,
+    fetchFn: typeof fetch,
+  ): Promise<void> {
+    const endpoints = baseUrl instanceof EndpointPool ? baseUrl : new EndpointPool(baseUrl);
 
     let response: Response;
     try {
-      response = await fetchFn(url);
+      response = await endpoints.run(async (base) => {
+        const url = `${base}/items/configuration`;
+        let res: Response;
+        try {
+          res = await fetchFn(url);
+        } catch (error) {
+          throw new FFBBNetworkError(url, { cause: error });
+        }
+        if (!res.ok) {
+          throw new FFBBRequestError(`HTTP ${res.status} ${res.statusText} for ${url}`, {
+            status: res.status,
+            statusText: res.statusText,
+            url,
+          });
+        }
+        return res;
+      });
     } catch (error) {
+      if (error instanceof FFBBRequestError) {
+        throw new FFBBAuthError(
+          `Configuration endpoint returned HTTP ${error.status}: ${error.statusText}`,
+          { cause: error },
+        );
+      }
       throw new FFBBAuthError('Failed to fetch API tokens from configuration endpoint', {
         cause: error,
       });
-    }
-
-    if (!response.ok) {
-      throw new FFBBAuthError(
-        `Configuration endpoint returned HTTP ${response.status}: ${response.statusText}`,
-      );
     }
 
     let body: DirectusResponse<Configuration>;
